@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS — Runtime</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg0: #070a0f;
+  --bg1: #0b0f1a;
+  --bg2: #0f1520;
+  --bg3: #141d2b;
+  --bg4: #1a2535;
+  --border: #1e2d40;
+  --border-bright: #243650;
+  --green: #0dffaa;
+  --cyan: #00c8ff;
+  --purple: #b06aff;
+  --red: #ff4d6d;
+  --yellow: #ffd166;
+  --text: #c9d8e8;
+  --text-dim: #5a7399;
+  --text-faint: #2d4060;
+  --font-ui: 'Syne', 'Segoe UI', sans-serif;
+  --font-code: 'Fira Code', 'Courier New', monospace;
+  --radius: 6px;
+  --glow-green: 0 0 20px rgba(13,255,170,0.15);
+  --glow-cyan: 0 0 20px rgba(0,200,255,0.15);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0); color: var(--text); font-family: var(--font-ui); }
+
+/* ─── LOADER ─────────────────────────────────────── */
+#loader {
+  position: fixed; inset: 0; background: var(--bg0);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  z-index: 9999; gap: 24px;
+  transition: opacity 0.5s ease;
+}
+.loader-logo {
+  font-size: 42px; font-weight: 800; letter-spacing: 12px; text-transform: uppercase;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  animation: pulse 2s ease-in-out infinite;
+}
+.loader-bar {
+  width: 280px; height: 2px; background: var(--bg4); border-radius: 2px; overflow: hidden;
+}
+.loader-fill {
+  height: 100%; background: linear-gradient(90deg, var(--green), var(--cyan));
+  border-radius: 2px; width: 0%;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 12px var(--green);
+}
+.loader-text {
+  font-family: var(--font-code); font-size: 11px; color: var(--text-dim); letter-spacing: 2px;
+}
+@keyframes pulse { 0%,100%{opacity:.8} 50%{opacity:1} }
+
+/* ─── LAYOUT ──────────────────────────────────────── */
+#app { display: flex; flex-direction: column; height: 100vh; }
+#header {
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  height: 52px; background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; z-index: 100; position: relative;
+}
+.logo {
+  font-size: 15px; font-weight: 800; letter-spacing: 6px; text-transform: uppercase;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  flex-shrink: 0;
+}
+.status-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 8px var(--green); animation: blink 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+.status-label { font-size: 11px; color: var(--text-dim); font-family: var(--font-code); flex-shrink: 0; }
+.spacer { flex: 1; }
+.nav-tabs { display: flex; gap: 4px; }
+.nav-tab {
+  padding: 6px 18px; border-radius: var(--radius); font-size: 12px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase; cursor: pointer; transition: all 0.2s;
+  background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  font-family: var(--font-ui);
+}
+.nav-tab:hover { color: var(--text); border-color: var(--border-bright); }
+.nav-tab.active {
+  background: var(--bg3); border-color: var(--green);
+  color: var(--green); box-shadow: var(--glow-green);
+}
+.nav-tab.secret.active { border-color: var(--purple); color: var(--purple); box-shadow: 0 0 20px rgba(176,106,255,0.15); }
+.nav-tab.pkg.active { border-color: var(--cyan); color: var(--cyan); box-shadow: var(--glow-cyan); }
+
+/* ─── MAIN BODY ───────────────────────────────────── */
+#body { display: flex; flex: 1; overflow: hidden; }
+
+/* ─── SIDEBAR ─────────────────────────────────────── */
+#sidebar {
+  width: 220px; flex-shrink: 0; background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: width 0.3s ease; overflow: hidden;
+}
+.sidebar-header {
+  padding: 14px 16px 10px; font-size: 10px; font-weight: 700;
+  letter-spacing: 3px; text-transform: uppercase; color: var(--text-faint);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+#file-list { flex: 1; overflow-y: auto; padding: 8px; }
+.file-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: var(--radius); cursor: pointer; font-size: 12px;
+  font-family: var(--font-code); color: var(--text-dim);
+  transition: all 0.15s; margin-bottom: 2px; position: relative;
+}
+.file-item:hover { background: var(--bg3); color: var(--text); }
+.file-item.active { background: var(--bg4); color: var(--green); }
+.file-icon { font-size: 13px; flex-shrink: 0; }
+.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-del {
+  opacity: 0; font-size: 14px; color: var(--red); cursor: pointer;
+  transition: opacity 0.15s; line-height: 1;
+}
+.file-item:hover .file-del { opacity: 0.7; }
+.file-del:hover { opacity: 1 !important; }
+.sidebar-footer { padding: 12px; flex-shrink: 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.btn-upload {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px; border-radius: var(--radius); border: 1px dashed var(--border-bright);
+  color: var(--text-dim); font-size: 12px; cursor: pointer; transition: all 0.2s;
+  background: transparent; font-family: var(--font-ui); font-weight: 600;
+}
+.btn-upload:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(0,200,255,0.05); }
+.btn-new {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px; border-radius: var(--radius); border: 1px solid var(--border-bright);
+  color: var(--text-dim); font-size: 12px; cursor: pointer; transition: all 0.2s;
+  background: transparent; font-family: var(--font-ui); font-weight: 600;
+}
+.btn-new:hover { border-color: var(--green); color: var(--green); background: rgba(13,255,170,0.05); }
+#file-input { display: none; }
+
+/* ─── EDITOR AREA ─────────────────────────────────── */
+#editor-area {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg0);
+}
+#tabs-bar {
+  display: flex; align-items: center; padding: 0 12px; gap: 4px;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  min-height: 44px; flex-shrink: 0; overflow-x: auto;
+}
+#tabs-bar::-webkit-scrollbar { height: 3px; }
+#tabs-bar::-webkit-scrollbar-track { background: transparent; }
+#tabs-bar::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+.editor-tab {
+  display: flex; align-items: center; gap: 8px; padding: 6px 14px;
+  border-radius: var(--radius); font-size: 12px; font-family: var(--font-code);
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
+  background: transparent; color: var(--text-dim); border: 1px solid transparent;
+}
+.editor-tab:hover { background: var(--bg3); color: var(--text); }
+.editor-tab.active {
+  background: var(--bg2); color: var(--cyan); border-color: var(--border-bright);
+}
+.editor-tab .tab-close {
+  font-size: 14px; color: var(--text-faint); transition: color 0.15s; line-height: 1;
+}
+.editor-tab:hover .tab-close, .editor-tab.active .tab-close { color: var(--text-dim); }
+.editor-tab .tab-close:hover { color: var(--red) !important; }
+.tab-add {
+  padding: 5px 10px; border-radius: var(--radius); cursor: pointer; color: var(--text-faint);
+  font-size: 18px; line-height: 1; transition: color 0.15s; flex-shrink: 0;
+}
+.tab-add:hover { color: var(--green); }
+
+#toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--bg1); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px;
+  border-radius: var(--radius); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.5px; cursor: pointer; transition: all 0.2s;
+  border: none; font-family: var(--font-ui); white-space: nowrap;
+}
+.btn-run {
+  background: var(--green); color: #000;
+  box-shadow: 0 0 20px rgba(13,255,170,0.3);
+}
+.btn-run:hover { box-shadow: 0 0 30px rgba(13,255,170,0.5); transform: translateY(-1px); }
+.btn-run:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-loop {
+  background: transparent; border: 1px solid var(--yellow); color: var(--yellow);
+}
+.btn-loop:hover { background: rgba(255,209,102,0.08); }
+.btn-loop.active { background: rgba(255,209,102,0.12); box-shadow: 0 0 15px rgba(255,209,102,0.2); }
+.btn-stop {
+  background: transparent; border: 1px solid var(--red); color: var(--red);
+}
+.btn-stop:hover { background: rgba(255,77,109,0.08); }
+.btn-clear-out {
+  background: transparent; border: 1px solid var(--border-bright); color: var(--text-dim);
+}
+.btn-clear-out:hover { color: var(--text); }
+.btn-reset {
+  background: transparent; border: 1px solid var(--border-bright); color: var(--text-dim);
+}
+.btn-reset:hover { border-color: var(--red); color: var(--red); }
+.loop-delay {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim);
+  font-family: var(--font-code);
+}
+.loop-delay input {
+  width: 60px; padding: 5px 8px; background: var(--bg3); border: 1px solid var(--border-bright);
+  border-radius: var(--radius); color: var(--text); font-family: var(--font-code); font-size: 11px;
+  outline: none;
+}
+.loop-delay input:focus { border-color: var(--yellow); }
+.toolbar-spacer { flex: 1; }
+.run-count {
+  font-size: 11px; color: var(--text-dim); font-family: var(--font-code);
+}
+
+/* ─── EDITORS WRAPPER ─────────────────────────────── */
+#editors-wrapper {
+  flex: 1; position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.editor-pane {
+  position: absolute; inset: 0; bottom: 0;
+  display: none; flex-direction: column;
+}
+.editor-pane.active { display: flex; }
+
+/* CodeMirror overrides */
+.CodeMirror {
+  flex: 1; height: 100% !important; font-family: var(--font-code) !important;
+  font-size: 13px !important; line-height: 1.7 !important;
+  background: var(--bg0) !important;
+}
+.CodeMirror-scroll { padding-bottom: 20px; }
+.CodeMirror-gutters { background: var(--bg1) !important; border-right: 1px solid var(--border) !important; }
+.CodeMirror-linenumber { color: var(--text-faint) !important; }
+.CodeMirror-cursor { border-left-color: var(--green) !important; }
+.CodeMirror-selected { background: rgba(13,255,170,0.08) !important; }
+.cm-s-material-darker.CodeMirror { background: var(--bg0) !important; }
+.cm-s-material-darker .CodeMirror-gutters { background: var(--bg1) !important; }
+
+/* Splitter */
+.split-handle {
+  height: 4px; background: var(--border); cursor: row-resize; flex-shrink: 0;
+  transition: background 0.2s; position: relative;
+}
+.split-handle::after {
+  content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 40px; height: 4px; background: var(--border-bright); border-radius: 2px;
+}
+.split-handle:hover { background: var(--border-bright); }
+
+/* ─── TERMINAL ────────────────────────────────────── */
+#terminal-area {
+  flex-shrink: 0; background: var(--bg1); border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#terminal-header {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.term-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.term-indicator {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint);
+  transition: background 0.3s;
+}
+.term-indicator.running { background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 1s ease-in-out infinite; }
+.term-indicator.error { background: var(--red); box-shadow: 0 0 8px var(--red); }
+#terminal {
+  flex: 1; overflow-y: auto; padding: 12px 16px; font-family: var(--font-code);
+  font-size: 12px; line-height: 1.6; scroll-behavior: smooth;
+}
+#terminal::-webkit-scrollbar { width: 5px; }
+#terminal::-webkit-scrollbar-track { background: transparent; }
+#terminal::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+.term-line { margin-bottom: 1px; word-break: break-all; white-space: pre-wrap; }
+.term-out { color: var(--text); }
+.term-err { color: var(--red); }
+.term-info { color: var(--cyan); }
+.term-success { color: var(--green); }
+.term-separator {
+  color: var(--text-faint); border-bottom: 1px solid var(--border);
+  margin: 6px 0; padding-bottom: 6px; font-size: 11px;
+}
+
+/* ─── PANEL VIEWS (secrets/pkg) ───────────────────── */
+#panel-view {
+  flex: 1; display: none; overflow-y: auto; padding: 32px;
+  animation: fadeIn 0.2s ease;
+}
+#panel-view.active { display: block; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+
+/* secrets */
+.lock-screen {
+  max-width: 360px; margin: 60px auto; text-align: center; display: flex;
+  flex-direction: column; align-items: center; gap: 20px;
+}
+.lock-icon { font-size: 48px; line-height: 1; }
+.lock-title { font-size: 22px; font-weight: 800; color: var(--purple); letter-spacing: 2px; }
+.lock-sub { font-size: 12px; color: var(--text-dim); }
+.pin-inputs { display: flex; gap: 12px; justify-content: center; }
+.pin-dot {
+  width: 52px; height: 56px; border-radius: var(--radius);
+  background: var(--bg2); border: 2px solid var(--border-bright);
+  font-family: var(--font-code); font-size: 22px; font-weight: 700;
+  color: var(--text); text-align: center; outline: none; caret-color: var(--purple);
+  transition: border-color 0.2s;
+}
+.pin-dot:focus { border-color: var(--purple); box-shadow: 0 0 15px rgba(176,106,255,0.2); }
+.btn-unlock {
+  background: var(--purple); color: #fff; padding: 10px 36px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 700; cursor: pointer; border: none; font-family: var(--font-ui);
+  transition: all 0.2s; letter-spacing: 1px;
+}
+.btn-unlock:hover { box-shadow: 0 0 25px rgba(176,106,255,0.35); transform: translateY(-1px); }
+.pin-hint { font-size: 11px; color: var(--text-faint); font-family: var(--font-code); }
+.lock-error { color: var(--red); font-size: 12px; }
+
+.secrets-panel { max-width: 700px; }
+.panel-title {
+  font-size: 18px; font-weight: 800; letter-spacing: 2px; color: var(--purple);
+  margin-bottom: 6px;
+}
+.panel-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 28px; }
+.key-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.key-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg2); border: 1px solid var(--border-bright); border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.key-name {
+  width: 160px; font-family: var(--font-code); font-size: 12px; color: var(--green);
+  font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex-shrink: 0;
+}
+.key-val {
+  flex: 1; font-family: var(--font-code); font-size: 12px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.key-actions { display: flex; gap: 6px; }
+.btn-sm {
+  padding: 4px 10px; font-size: 11px; border-radius: 4px; cursor: pointer;
+  font-family: var(--font-ui); font-weight: 600; transition: all 0.15s;
+}
+.btn-show { background: var(--bg4); border: 1px solid var(--border-bright); color: var(--text-dim); }
+.btn-show:hover { color: var(--text); }
+.btn-del-key { background: transparent; border: 1px solid transparent; color: var(--text-faint); }
+.btn-del-key:hover { color: var(--red); border-color: var(--red); }
+
+.add-key-form {
+  background: var(--bg2); border: 1px solid var(--border-bright); border-radius: var(--radius);
+  padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.add-key-form .form-row { display: flex; gap: 10px; }
+.inp {
+  flex: 1; padding: 9px 12px; background: var(--bg3); border: 1px solid var(--border-bright);
+  border-radius: var(--radius); color: var(--text); font-family: var(--font-code); font-size: 12px;
+  outline: none; transition: border-color 0.2s;
+}
+.inp:focus { border-color: var(--purple); }
+.btn-add-key {
+  background: var(--purple); color: #fff; padding: 9px 20px; border-radius: var(--radius);
+  font-size: 12px; font-weight: 700; cursor: pointer; border: none; font-family: var(--font-ui);
+  transition: all 0.2s; white-space: nowrap;
+}
+.btn-add-key:hover { box-shadow: 0 0 20px rgba(176,106,255,0.3); }
+
+.change-pin-section { margin-top: 32px; }
+.section-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 14px; border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+/* packages */
+.pkg-panel { max-width: 700px; }
+.pkg-title { font-size: 18px; font-weight: 800; letter-spacing: 2px; color: var(--cyan); margin-bottom: 6px; }
+.pkg-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 28px; }
+.pkg-install-form {
+  display: flex; gap: 10px; margin-bottom: 20px;
+}
+.btn-install {
+  background: var(--cyan); color: #000; padding: 10px 24px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 700; cursor: pointer; border: none; font-family: var(--font-ui);
+  transition: all 0.2s; white-space: nowrap;
+}
+.btn-install:hover { box-shadow: 0 0 25px rgba(0,200,255,0.35); transform: translateY(-1px); }
+.btn-install:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.pkg-terminal {
+  background: var(--bg2); border: 1px solid var(--border-bright); border-radius: var(--radius);
+  padding: 14px; min-height: 140px; max-height: 240px; overflow-y: auto;
+  font-family: var(--font-code); font-size: 12px; line-height: 1.7; color: var(--text);
+}
+.pkg-terminal::-webkit-scrollbar { width: 4px; }
+.pkg-terminal::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 2px; }
+.installed-list { margin-top: 24px; }
+.installed-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 12px;
+}
+.pkg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pkg-chip {
+  padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border-bright);
+  border-radius: 20px; font-size: 11px; font-family: var(--font-code); color: var(--cyan);
+}
+
+/* ─── SCROLLBARS ──────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+
+/* ─── CONTEXT MENU ────────────────────────────────── */
+.ctx-menu {
+  position: fixed; background: var(--bg3); border: 1px solid var(--border-bright);
+  border-radius: var(--radius); padding: 6px; z-index: 9998; min-width: 160px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5); display: none;
+}
+.ctx-menu.open { display: block; animation: fadeIn 0.15s ease; }
+.ctx-item {
+  padding: 8px 14px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  transition: background 0.1s; color: var(--text-dim);
+}
+.ctx-item:hover { background: var(--bg4); color: var(--text); }
+.ctx-item.danger:hover { color: var(--red); }
+
+/* ─── MODAL ───────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9997;
+  display: none; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg2); border: 1px solid var(--border-bright); border-radius: 10px;
+  padding: 28px; min-width: 360px; max-width: 500px; width: 100%;
+  animation: fadeIn 0.2s ease;
+}
+.modal-title { font-size: 16px; font-weight: 800; margin-bottom: 6px; color: var(--text); }
+.modal-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 20px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.btn-modal-cancel {
+  padding: 8px 20px; border-radius: var(--radius); border: 1px solid var(--border-bright);
+  background: transparent; color: var(--text-dim); cursor: pointer; font-family: var(--font-ui);
+  font-size: 12px; font-weight: 600; transition: all 0.2s;
+}
+.btn-modal-cancel:hover { color: var(--text); }
+.btn-modal-ok {
+  padding: 8px 20px; border-radius: var(--radius); border: none;
+  background: var(--green); color: #000; cursor: pointer; font-family: var(--font-ui);
+  font-size: 12px; font-weight: 700; transition: all 0.2s;
+}
+.btn-modal-ok:hover { box-shadow: 0 0 20px rgba(13,255,170,0.3); }
+
+/* drag-over highlight */
+body.drag-over #sidebar { border-color: var(--cyan); }
+.drop-overlay {
+  position: fixed; inset: 0; background: rgba(0,200,255,0.07); z-index: 9990;
+  border: 3px dashed var(--cyan); pointer-events: none; display: none;
+  align-items: center; justify-content: center; font-size: 22px; color: var(--cyan);
+  font-weight: 800; letter-spacing: 3px;
+}
+.drop-overlay.show { display: flex; }
+</style>
+</head>
+<body>
+
+<!-- Loader -->
+<div id="loader">
+  <div class="loader-logo">NEXUS</div>
+  <div class="loader-bar"><div class="loader-fill" id="loader-fill"></div></div>
+  <div class="loader-text" id="loader-text">INITIALIZING RUNTIME...</div>
+</div>
+
+<!-- Drop overlay -->
+<div class="drop-overlay" id="drop-overlay">⬇ DROP FILES TO UPLOAD</div>
+
+<!-- Context menu -->
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-rename">✏ Rename</div>
+  <div class="ctx-item" id="ctx-duplicate">⧉ Duplicate</div>
+  <div class="ctx-item danger" id="ctx-delete">✕ Delete</div>
+</div>
+
+<!-- Rename Modal -->
+<div class="modal-overlay" id="rename-modal">
+  <div class="modal">
+    <div class="modal-title">Rename File</div>
+    <div class="modal-sub">Enter a new name for this file.</div>
+    <input class="inp" id="rename-input" style="width:100%" placeholder="filename.py">
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-ok" onclick="confirmRename()">Rename</button>
+    </div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <!-- Header -->
+  <header id="header">
+    <div class="logo">NEXUS</div>
+    <div class="status-dot" id="status-dot"></div>
+    <div class="status-label" id="status-label">RUNTIME ACTIVE</div>
+    <div class="spacer"></div>
+    <div class="nav-tabs">
+      <div class="nav-tab active" id="tab-runner" onclick="switchTab('runner')">⚡ Runner</div>
+      <div class="nav-tab secret" id="tab-secrets" onclick="switchTab('secrets')">🔑 Secrets</div>
+      <div class="nav-tab pkg" id="tab-packages" onclick="switchTab('packages')">📦 Packages</div>
+    </div>
+  </header>
+
+  <!-- Body -->
+  <div id="body">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">📁 Files</div>
+      <div id="file-list"></div>
+      <div class="sidebar-footer">
+        <button class="btn-upload" onclick="document.getElementById('file-input').click()">
+          ⬆ Upload File
+        </button>
+        <button class="btn-new" onclick="createNewFile()">
+          + New File
+        </button>
+        <input type="file" id="file-input" multiple accept=".py,.txt,.json,.csv,.js,.ts,.sh,.yaml,.yml,.toml,.md">
+      </div>
+    </aside>
+
+    <!-- Editor + Terminal -->
+    <div id="editor-area">
+      <!-- Tabs bar -->
+      <div id="tabs-bar">
+        <div class="tab-add" title="New tab" onclick="createNewFile()">+</div>
+      </div>
+
+      <!-- Toolbar -->
+      <div id="toolbar">
+        <button class="btn btn-run" id="btn-run" onclick="runCode()">▶ Run</button>
+        <button class="btn btn-loop" id="btn-loop" onclick="toggleLoop()">⟳ Loop</button>
+        <div class="loop-delay">
+          every <input type="number" id="loop-delay-input" value="2000" min="100"> ms
+        </div>
+        <button class="btn btn-stop" id="btn-stop" onclick="stopAll()" disabled>■ Stop</button>
+        <div class="toolbar-spacer"></div>
+        <span class="run-count" id="run-count"></span>
+        <button class="btn btn-clear-out" onclick="clearTerminal()">Clear Output</button>
+        <button class="btn btn-reset" onclick="resetGlobals()" title="Clear all Python globals (fresh environment)">Reset Globals</button>
+      </div>
+
+      <!-- Editors wrapper (resizable) -->
+      <div id="editors-wrapper" style="height: 60%;">
+        <!-- Editor panes added dynamically -->
+      </div>
+
+      <!-- Resize handle -->
+      <div class="split-handle" id="split-handle"></div>
+
+      <!-- Terminal -->
+      <div id="terminal-area" style="flex:1;min-height:120px;">
+        <div id="terminal-header">
+          <div class="term-indicator" id="term-indicator"></div>
+          <div class="term-label">Output</div>
+        </div>
+        <div id="terminal"></div>
+      </div>
+    </div>
+
+    <!-- Panel view (secrets / packages) -->
+    <div id="panel-view">
+      <!-- Secrets -->
+      <div id="secrets-content" style="display:none">
+        <!-- Lock screen -->
+        <div class="lock-screen" id="lock-screen">
+          <div class="lock-icon">🔐</div>
+          <div class="lock-title">SECRETS VAULT</div>
+          <div class="lock-sub">Enter your 4-digit PIN to unlock</div>
+          <div class="pin-inputs">
+            <input class="pin-dot" maxlength="1" type="password" inputmode="numeric" id="pin0">
+            <input class="pin-dot" maxlength="1" type="password" inputmode="numeric" id="pin1">
+            <input class="pin-dot" maxlength="1" type="password" inputmode="numeric" id="pin2">
+            <input class="pin-dot" maxlength="1" type="password" inputmode="numeric" id="pin3">
+          </div>
+          <div class="lock-error" id="pin-error" style="display:none">Incorrect PIN. Try again.</div>
+          <button class="btn-unlock" onclick="tryUnlock()">Unlock</button>
+          <div class="pin-hint">Default PIN: 1234</div>
+        </div>
+        <!-- Secrets panel -->
+        <div class="secrets-panel" id="secrets-unlocked" style="display:none">
+          <div class="panel-title">🔑 API KEY VAULT</div>
+          <div class="panel-sub">Keys are stored locally in your browser. To use in code: <code style="color:var(--green);font-family:var(--font-code)">import os; key = os.environ['KEY_NAME']</code></div>
+          <div class="key-list" id="key-list"></div>
+          <div class="add-key-form">
+            <div class="form-row">
+              <input class="inp" id="new-key-name" placeholder="KEY_NAME (e.g. OPENAI_API_KEY)">
+              <input class="inp" id="new-key-val" type="password" placeholder="sk-...">
+              <button class="btn-add-key" onclick="addApiKey()">+ Add</button>
+            </div>
+          </div>
+          <div class="change-pin-section">
+            <div class="section-label">Change PIN</div>
+            <div class="form-row" style="display:flex;gap:10px;max-width:360px">
+              <input class="inp" id="new-pin-input" type="password" maxlength="4" placeholder="New 4-digit PIN" inputmode="numeric">
+              <button class="btn-add-key" onclick="changePin()" style="background:var(--purple)">Update PIN</button>
+            </div>
+          </div>
+          <div style="margin-top:20px">
+            <button onclick="lockSecrets()" style="background:transparent;border:1px solid var(--border-bright);color:var(--text-dim);padding:8px 18px;border-radius:var(--radius);cursor:pointer;font-family:var(--font-ui);font-size:12px;font-weight:600;transition:all .2s" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-dim)'">🔒 Lock Vault</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Packages -->
+      <div id="packages-content" style="display:none">
+        <div class="pkg-panel">
+          <div class="pkg-title">📦 PACKAGE MANAGER</div>
+          <div class="pkg-sub">Install pure-Python packages via micropip. Packages requiring native OS features (sockets, threads, C extensions) cannot run in a browser sandbox.</div>
+          <div class="pkg-install-form">
+            <input class="inp" id="pkg-input" placeholder="numpy, pandas, Pillow, ..." onkeydown="if(event.key==='Enter')installPkg()">
+            <button class="btn-install" id="btn-install" onclick="installPkg()">Install</button>
+          </div>
+          <div class="pkg-terminal" id="pkg-terminal">
+            <span style="color:var(--text-dim)">// Installation output will appear here...</span>
+          </div>
+          <div class="installed-list">
+            <div class="installed-title">Installed Packages</div>
+            <div class="pkg-chips" id="pkg-chips"></div>
+          </div>
+          <div style="margin-top:28px;background:var(--bg2);border:1px solid var(--border-bright);border-radius:var(--radius);padding:18px;">
+            <div style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--text-faint);margin-bottom:14px;">✅ KNOWN WORKING PACKAGES</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px" id="compat-chips"></div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--red);margin-bottom:10px;margin-top:4px;">❌ WON'T WORK IN BROWSER</div>
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.8;">
+              <code style="color:var(--red);font-family:var(--font-code)">discord.py, discord · aiohttp · websockets · asyncio (networking) · pywin32 · tkinter · cv2 (full) · anything using native OS sockets/threads/GUI</code>
+              <div style="margin-top:10px;font-size:11px;color:var(--text-faint)">These require native OS networking or C extensions not available in WebAssembly. For Discord bots, you need a real server (e.g. a VPS, Replit, Railway).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════
+let pyodide = null;
+let sessions = []; // {id, name, editor, code}
+let activeSessionId = null;
+let isLooping = false;
+let loopTimer = null;
+let runCount = 0;
+let isRunning = false;
+let secretsUnlocked = false;
+let currentTab = 'runner';
+let ctxTarget = null; // file item context menu target
+let renameTarget = null;
+let installedPackages = [];
+const DEFAULT_PIN = '1234';
+
+// ═══════════════════════════════════════════════════
+//  PYODIDE INIT
+// ═══════════════════════════════════════════════════
+async function initPyodide() {
+  const fill = document.getElementById('loader-fill');
+  const txt = document.getElementById('loader-text');
+
+  const steps = [
+    [10, 'LOADING PYODIDE RUNTIME...'],
+    [30, 'CONFIGURING ENVIRONMENT...'],
+    [55, 'SETTING UP FILESYSTEM...'],
+    [75, 'INITIALIZING MICROPIP...'],
+    [90, 'INJECTING OS ENVIRONMENT...'],
+    [100, 'READY']
+  ];
+
+  let si = 0;
+  const stepInterval = setInterval(() => {
+    if (si < steps.length) {
+      fill.style.width = steps[si][0] + '%';
+      txt.textContent = steps[si][1];
+      si++;
+    }
+  }, 400);
+
+  try {
+    pyodide = await loadPyodide({
+      stdout: (t) => appendTerm(t, 'out'),
+      stderr: (t) => appendTerm(t, 'err'),
+    });
+
+    await pyodide.loadPackage('micropip');
+    
+    // inject stored API keys as env vars
+    injectEnvVars();
+
+    clearInterval(stepInterval);
+    fill.style.width = '100%';
+    txt.textContent = 'READY';
+
+    setTimeout(() => {
+      const loader = document.getElementById('loader');
+      loader.style.opacity = '0';
+      setTimeout(() => loader.remove(), 500);
+    }, 300);
+
+    setStatus('RUNTIME ACTIVE', true);
+    appendTerm('Python ' + pyodide.runPython('import sys; sys.version') + '\n', 'info');
+    appendTerm('NEXUS Runtime initialized. Type your code and press Run ▶\n', 'success');
+
+  } catch(e) {
+    clearInterval(stepInterval);
+    txt.textContent = 'ERROR: ' + e.message;
+    fill.style.background = 'var(--red)';
+    setStatus('ERROR', false);
+  }
+}
+
+function injectEnvVars() {
+  const keys = loadApiKeys();
+  if (Object.keys(keys).length === 0) return;
+  let code = 'import os\n';
+  for (const [k, v] of Object.entries(keys)) {
+    const safe = v.replace(/'/g, "\\'");
+    code += `os.environ['${k}'] = '${safe}'\n`;
+  }
+  try { pyodide.runPython(code); } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════
+//  SESSION / EDITOR
+// ═══════════════════════════════════════════════════
+let sessionCounter = 0;
+
+function createSession(name, code='', isFile=false) {
+  const id = 'sess_' + (++sessionCounter);
+  const session = { id, name, code, isFile };
+
+  // Create editor pane
+  const pane = document.createElement('div');
+  pane.className = 'editor-pane';
+  pane.id = 'pane_' + id;
+  document.getElementById('editors-wrapper').appendChild(pane);
+
+  // CodeMirror
+  const cm = CodeMirror(pane, {
+    value: code,
+    mode: 'python',
+    theme: 'material-darker',
+    lineNumbers: true,
+    autoCloseBrackets: true,
+    matchBrackets: true,
+    indentUnit: 4,
+    tabSize: 4,
+    indentWithTabs: false,
+    extraKeys: {
+      'Ctrl-Enter': () => runCode(),
+      'Tab': (cm) => cm.replaceSelection('    '),
+    },
+    lineWrapping: false,
+  });
+
+  cm.on('change', () => {
+    const s = sessions.find(s => s.id === id);
+    if (s) s.code = cm.getValue();
+    // sync to file list if isFile
+    if (s && s.isFile) {
+      try { pyodide.FS.writeFile(s.name, cm.getValue()); } catch(e) {}
+    }
+  });
+
+  session.editor = cm;
+  sessions.push(session);
+
+  // Add tab
+  addEditorTab(id, name);
+  switchSession(id);
+
+  // Add to file list
+  if (isFile) addFileItem(id, name);
+
+  setTimeout(() => cm.refresh(), 50);
+  return id;
+}
+
+function addEditorTab(id, name) {
+  const bar = document.getElementById('tabs-bar');
+  const t = document.createElement('div');
+  t.className = 'editor-tab';
+  t.id = 'etab_' + id;
+  t.innerHTML = `<span>${escHtml(name)}</span><span class="tab-close" onclick="event.stopPropagation();closeSession('${id}')">×</span>`;
+  t.onclick = () => switchSession(id);
+  bar.insertBefore(t, bar.querySelector('.tab-add'));
+}
+
+function switchSession(id) {
+  activeSessionId = id;
+  document.querySelectorAll('.editor-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.editor-tab').forEach(t => t.classList.remove('active'));
+  const pane = document.getElementById('pane_' + id);
+  const tab = document.getElementById('etab_' + id);
+  if (pane) pane.classList.add('active');
+  if (tab) tab.classList.add('active');
+  const session = sessions.find(s => s.id === id);
+  if (session) setTimeout(() => session.editor.refresh(), 20);
+  // highlight file in sidebar
+  document.querySelectorAll('.file-item').forEach(fi => {
+    fi.classList.toggle('active', fi.dataset.sid === id);
+  });
+}
+
+function closeSession(id) {
+  if (sessions.length <= 1) return;
+  const idx = sessions.findIndex(s => s.id === id);
+  sessions.splice(idx, 1);
+  document.getElementById('pane_' + id)?.remove();
+  document.getElementById('etab_' + id)?.remove();
+  // remove file item
+  document.querySelector(`.file-item[data-sid="${id}"]`)?.remove();
+  // switch to another session
+  if (activeSessionId === id) {
+    const next = sessions[Math.max(0, idx - 1)];
+    if (next) switchSession(next.id);
+  }
+}
+
+function createNewFile() {
+  const name = 'script_' + sessionCounter + '.py';
+  createSession(name, '# New script\nprint("Hello, World!")\n');
+}
+
+// ═══════════════════════════════════════════════════
+//  FILE MANAGEMENT
+// ═══════════════════════════════════════════════════
+function addFileItem(sid, name) {
+  const list = document.getElementById('file-list');
+  const item = document.createElement('div');
+  item.className = 'file-item';
+  item.dataset.sid = sid;
+  item.innerHTML = `<span class="file-icon">🐍</span><span class="file-name" title="${escHtml(name)}">${escHtml(name)}</span><span class="file-del" onclick="event.stopPropagation();closeSession('${sid}')">×</span>`;
+  item.onclick = () => { switchSession(sid); };
+  item.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showCtxMenu(e.clientX, e.clientY, sid);
+  });
+  list.appendChild(item);
+}
+
+function updateFileItem(sid, name) {
+  const item = document.querySelector(`.file-item[data-sid="${sid}"]`);
+  if (item) {
+    item.querySelector('.file-name').textContent = name;
+    item.querySelector('.file-name').title = name;
+    item.querySelector('.file-del').setAttribute('onclick', `event.stopPropagation();closeSession('${sid}')`);
+  }
+  const tab = document.getElementById('etab_' + sid);
+  if (tab) tab.querySelector('span').textContent = name;
+}
+
+document.getElementById('file-input').addEventListener('change', async function() {
+  for (const file of this.files) await uploadFile(file);
+  this.value = '';
+});
+
+async function uploadFile(file) {
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const content = e.target.result;
+    const sid = createSession(file.name, content, true);
+    // write to pyodide FS
+    if (pyodide) {
+      try { pyodide.FS.writeFile(file.name, content); } catch(ex) {}
+    }
+    appendTerm(`✔ Uploaded: ${file.name}\n`, 'success');
+  };
+  reader.readAsText(file);
+}
+
+// Drag and drop
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').classList.add('show');
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.getElementById('drop-overlay').classList.remove('show');
+});
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').classList.remove('show');
+  for (const file of e.dataTransfer.files) await uploadFile(file);
+});
+
+// ═══════════════════════════════════════════════════
+//  CONTEXT MENU
+// ═══════════════════════════════════════════════════
+function showCtxMenu(x, y, sid) {
+  ctxTarget = sid;
+  const menu = document.getElementById('ctx-menu');
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.classList.add('open');
+}
+document.addEventListener('click', () => {
+  document.getElementById('ctx-menu').classList.remove('open');
+  ctxTarget = null;
+});
+document.getElementById('ctx-rename').onclick = () => {
+  if (!ctxTarget) return;
+  const s = sessions.find(s => s.id === ctxTarget);
+  if (!s) return;
+  renameTarget = ctxTarget;
+  document.getElementById('rename-input').value = s.name;
+  document.getElementById('rename-modal').classList.add('open');
+};
+document.getElementById('ctx-delete').onclick = () => {
+  if (!ctxTarget) return;
+  closeSession(ctxTarget);
+  ctxTarget = null;
+};
+document.getElementById('ctx-duplicate').onclick = () => {
+  if (!ctxTarget) return;
+  const s = sessions.find(s => s.id === ctxTarget);
+  if (!s) return;
+  const newName = 'copy_' + s.name;
+  createSession(newName, s.code, s.isFile);
+  ctxTarget = null;
+};
+
+function closeModal() {
+  document.getElementById('rename-modal').classList.remove('open');
+  renameTarget = null;
+}
+function confirmRename() {
+  if (!renameTarget) return;
+  const newName = document.getElementById('rename-input').value.trim();
+  if (!newName) return;
+  const s = sessions.find(s => s.id === renameTarget);
+  if (s) {
+    s.name = newName;
+    updateFileItem(renameTarget, newName);
+  }
+  closeModal();
+}
+
+// ═══════════════════════════════════════════════════
+//  RUN ENGINE
+// ═══════════════════════════════════════════════════
+async function runCode() {
+  if (!pyodide || isRunning) return;
+  const session = sessions.find(s => s.id === activeSessionId);
+  if (!session) return;
+
+  isRunning = true;
+  runCount++;
+  updateRunUI(true);
+
+  const code = session.editor.getValue();
+  const ts = new Date().toLocaleTimeString();
+  appendTerm(`\n── Run #${runCount}  [${ts}]  ${session.name} ──────────────\n`, 'separator');
+
+  try {
+    await pyodide.runPythonAsync(code);
+    setTermIndicator('idle');
+  } catch(e) {
+    appendTerm(e.message + '\n', 'err');
+    setTermIndicator('error');
+  }
+
+  isRunning = false;
+  updateRunUI(false);
+  document.getElementById('run-count').textContent = `Runs: ${runCount}`;
+}
+
+function toggleLoop() {
+  if (isLooping) {
+    stopLoop();
+  } else {
+    startLoop();
+  }
+}
+function startLoop() {
+  isLooping = true;
+  document.getElementById('btn-loop').classList.add('active');
+  document.getElementById('btn-loop').textContent = '⟳ Looping...';
+  document.getElementById('btn-stop').disabled = false;
+  const delay = parseInt(document.getElementById('loop-delay-input').value) || 2000;
+  runCode();
+  loopTimer = setInterval(() => { if (!isRunning) runCode(); }, delay);
+}
+function stopLoop() {
+  isLooping = false;
+  clearInterval(loopTimer);
+  loopTimer = null;
+  document.getElementById('btn-loop').classList.remove('active');
+  document.getElementById('btn-loop').textContent = '⟳ Loop';
+}
+function stopAll() {
+  stopLoop();
+  isRunning = false;
+  updateRunUI(false);
+  setTermIndicator('idle');
+}
+function updateRunUI(running) {
+  document.getElementById('btn-run').disabled = running && !isLooping;
+  document.getElementById('btn-stop').disabled = !running && !isLooping;
+  setTermIndicator(running ? 'running' : 'idle');
+}
+
+async function resetGlobals() {
+  if (!pyodide) return;
+  stopAll();
+  appendTerm('\n── Globals cleared. Fresh environment. ──\n', 'info');
+  pyodide.globals.clear();
+  runCount = 0;
+  document.getElementById('run-count').textContent = '';
+  await pyodide.runPythonAsync('');
+  injectEnvVars();
+}
+
+// ═══════════════════════════════════════════════════
+//  TERMINAL
+// ═══════════════════════════════════════════════════
+function appendTerm(text, type='out') {
+  const term = document.getElementById('terminal');
+  const line = document.createElement('div');
+  line.className = 'term-line';
+  if (type === 'out') line.classList.add('term-out');
+  else if (type === 'err') line.classList.add('term-err');
+  else if (type === 'info') line.classList.add('term-info');
+  else if (type === 'success') line.classList.add('term-success');
+  else if (type === 'separator') { line.classList.add('term-separator'); }
+  line.textContent = text;
+  term.appendChild(line);
+  term.scrollTop = term.scrollHeight;
+}
+function clearTerminal() {
+  document.getElementById('terminal').innerHTML = '';
+}
+function setTermIndicator(state) {
+  const el = document.getElementById('term-indicator');
+  el.className = 'term-indicator';
+  if (state === 'running') el.classList.add('running');
+  else if (state === 'error') el.classList.add('error');
+}
+function setStatus(label, active) {
+  document.getElementById('status-label').textContent = label;
+  document.getElementById('status-dot').style.background = active ? 'var(--green)' : 'var(--red)';
+}
+
+// ═══════════════════════════════════════════════════
+//  TAB SWITCHING
+// ═══════════════════════════════════════════════════
+function switchTab(tab) {
+  currentTab = tab;
+  ['runner','secrets','packages'].forEach(t => {
+    document.getElementById('tab-' + t)?.classList.toggle('active', t === tab);
+  });
+
+  const editorArea = document.getElementById('editor-area');
+  const panelView = document.getElementById('panel-view');
+  const sidebar = document.getElementById('sidebar');
+
+  if (tab === 'runner') {
+    editorArea.style.display = 'flex';
+    panelView.classList.remove('active');
+    sidebar.style.display = 'flex';
+  } else {
+    editorArea.style.display = 'none';
+    panelView.classList.add('active');
+    sidebar.style.display = 'none';
+
+    document.getElementById('secrets-content').style.display = tab === 'secrets' ? 'block' : 'none';
+    document.getElementById('packages-content').style.display = tab === 'packages' ? 'block' : 'none';
+
+    if (tab === 'packages') { renderInstalledPkgs(); renderCompatChips(); }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+//  SECRETS / API KEYS
+// ═══════════════════════════════════════════════════
+function loadApiKeys() {
+  try {
+    const raw = localStorage.getItem('nexus_keys');
+    if (!raw) return {};
+    return JSON.parse(atob(raw));
+  } catch(e) { return {}; }
+}
+function saveApiKeys(keys) {
+  localStorage.setItem('nexus_keys', btoa(JSON.stringify(keys)));
+}
+function loadPin() {
+  return localStorage.getItem('nexus_pin') || DEFAULT_PIN;
+}
+function savePin(pin) {
+  localStorage.setItem('nexus_pin', pin);
+}
+
+// Pin inputs auto-advance
+document.querySelectorAll('.pin-dot').forEach((inp, i) => {
+  inp.addEventListener('input', () => {
+    inp.value = inp.value.replace(/\D/g, '').slice(0,1);
+    if (inp.value && i < 3) document.getElementById('pin' + (i+1)).focus();
+    if (i === 3 && inp.value) tryUnlock();
+  });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && !inp.value && i > 0) document.getElementById('pin' + (i-1)).focus();
+    if (e.key === 'Enter') tryUnlock();
+  });
+});
+
+function tryUnlock() {
+  const pin = [0,1,2,3].map(i => document.getElementById('pin' + i).value).join('');
+  if (pin === loadPin()) {
+    secretsUnlocked = true;
+    document.getElementById('lock-screen').style.display = 'none';
+    document.getElementById('secrets-unlocked').style.display = 'block';
+    renderKeyList();
+  } else {
+    document.getElementById('pin-error').style.display = 'block';
+    [0,1,2,3].forEach(i => { document.getElementById('pin' + i).value = ''; });
+    document.getElementById('pin0').focus();
+    setTimeout(() => document.getElementById('pin-error').style.display = 'none', 2500);
+  }
+}
+function lockSecrets() {
+  secretsUnlocked = false;
+  document.getElementById('lock-screen').style.display = 'flex';
+  document.getElementById('secrets-unlocked').style.display = 'none';
+  [0,1,2,3].forEach(i => { document.getElementById('pin' + i).value = ''; });
+}
+function renderKeyList() {
+  const keys = loadApiKeys();
+  const list = document.getElementById('key-list');
+  list.innerHTML = '';
+  if (Object.keys(keys).length === 0) {
+    list.innerHTML = '<div style="color:var(--text-faint);font-size:12px;padding:12px 0">No API keys stored yet.</div>';
+    return;
+  }
+  for (const [name, val] of Object.entries(keys)) {
+    const row = document.createElement('div');
+    row.className = 'key-row';
+    const masked = '•'.repeat(Math.min(val.length, 24));
+    row.innerHTML = `
+      <div class="key-name">${escHtml(name)}</div>
+      <div class="key-val" id="kv_${escHtml(name)}">${masked}</div>
+      <div class="key-actions">
+        <button class="btn-sm btn-show" onclick="toggleKeyVal('${escHtml(name)}','${escHtml(val)}',this)">Show</button>
+        <button class="btn-sm btn-del-key" onclick="deleteKey('${escHtml(name)}')">✕</button>
+      </div>`;
+    list.appendChild(row);
+  }
+}
+function toggleKeyVal(name, val, btn) {
+  const el = document.getElementById('kv_' + name);
+  if (btn.textContent === 'Show') {
+    el.textContent = val;
+    btn.textContent = 'Hide';
+  } else {
+    el.textContent = '•'.repeat(Math.min(val.length, 24));
+    btn.textContent = 'Show';
+  }
+}
+function addApiKey() {
+  const name = document.getElementById('new-key-name').value.trim().toUpperCase().replace(/\s+/g, '_');
+  const val = document.getElementById('new-key-val').value.trim();
+  if (!name || !val) return;
+  const keys = loadApiKeys();
+  keys[name] = val;
+  saveApiKeys(keys);
+  document.getElementById('new-key-name').value = '';
+  document.getElementById('new-key-val').value = '';
+  renderKeyList();
+  injectEnvVars();
+  appendTerm(`✔ API Key added: ${name}\n`, 'success');
+}
+function deleteKey(name) {
+  const keys = loadApiKeys();
+  delete keys[name];
+  saveApiKeys(keys);
+  renderKeyList();
+}
+function changePin() {
+  const newPin = document.getElementById('new-pin-input').value.trim();
+  if (!/^\d{4}$/.test(newPin)) {
+    alert('PIN must be exactly 4 digits');
+    return;
+  }
+  savePin(newPin);
+  document.getElementById('new-pin-input').value = '';
+  appendTerm('✔ PIN updated successfully\n', 'success');
+}
+
+// ═══════════════════════════════════════════════════
+//  PACKAGES
+// ═══════════════════════════════════════════════════
+const KNOWN_WORKING = ['numpy','pandas','scipy','matplotlib','Pillow','scikit-learn','sympy','beautifulsoup4','lxml','pytz','dateutil','regex','pydantic','httpx','rich','orjson','more-itertools','toolz','attrs','cattrs','networkx'];
+const BROWSER_INCOMPATIBLE = ['discord','discord.py','aiohttp','websockets','pywin32','tkinter','pygame','cv2','pynput','paramiko','cryptography','cffi','gevent','uvloop','twisted'];
+
+function pkgLog(msg, type='') {
+  const el = document.getElementById('pkg-terminal');
+  const line = document.createElement('div');
+  line.style.color = type === 'err' ? 'var(--red)' : type === 'ok' ? 'var(--green)' : type === 'warn' ? 'var(--yellow)' : 'var(--text)';
+  line.style.fontFamily = 'var(--font-code)';
+  line.style.fontSize = '12px';
+  line.style.lineHeight = '1.8';
+  line.style.whiteSpace = 'pre-wrap';
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function installPkg() {
+  if (!pyodide) { pkgLog('❌ Runtime not ready yet. Wait for initialization.', 'err'); return; }
+  const raw = document.getElementById('pkg-input').value.trim();
+  if (!raw) return;
+  const pkgs = raw.split(/[,\s]+/).filter(Boolean);
+  const btn = document.getElementById('btn-install');
+  btn.disabled = true;
+  btn.textContent = 'Installing...';
+
+  // Clear old output
+  document.getElementById('pkg-terminal').innerHTML = '';
+
+  // Load micropip via JS API (more reliable than runPythonAsync)
+  let micropip;
+  try {
+    await pyodide.loadPackage('micropip');
+    micropip = pyodide.pyimport('micropip');
+  } catch(e) {
+    pkgLog('❌ Failed to load micropip: ' + e.message, 'err');
+    btn.disabled = false; btn.textContent = 'Install'; return;
+  }
+
+  for (const pkg of pkgs) {
+    const pkgLower = pkg.toLowerCase().replace(/[._-]/g,'');
+
+    // Check known incompatible
+    const incompatible = BROWSER_INCOMPATIBLE.find(b => b.toLowerCase().replace(/[._-]/g,'') === pkgLower || pkgLower.includes(b.toLowerCase().replace(/[._-]/g,'')));
+    if (incompatible) {
+      pkgLog(`⛔ ${pkg} — INCOMPATIBLE WITH BROWSER RUNTIME\n`, 'err');
+      pkgLog(`   This package requires native OS features (sockets, threads, C extensions)\n   that are not available in WebAssembly/browser environments.\n`, 'warn');
+      if (pkg.toLowerCase().includes('discord')) {
+        pkgLog(`   💡 For Discord bots you need a real server:\n   → Replit.com  → Railway.app  → a VPS\n   NEXUS runs Python in your browser (Pyodide/WASM) which\n   cannot open TCP connections to Discord's gateway.\n`, 'warn');
+      }
+      continue;
+    }
+
+    pkgLog(`$ micropip install ${pkg}`, '');
+    try {
+      await micropip.install(pkg);
+      pkgLog(`✔ ${pkg} installed successfully!\n`, 'ok');
+      if (!installedPackages.includes(pkg)) installedPackages.push(pkg);
+    } catch(e) {
+      const msg = e.message || String(e);
+      pkgLog(`✗ Failed: ${msg}\n`, 'err');
+      // Give helpful hints
+      if (msg.includes('not found') || msg.includes('404')) {
+        pkgLog(`   💡 Package may not be on PyPI or has a different name.\n   Check: https://pypi.org/project/${pkg}/\n`, 'warn');
+      } else if (msg.includes('whl') || msg.includes('wheel') || msg.includes('pure')) {
+        pkgLog(`   💡 This package has C extensions and no pure-Python wheel.\n   It cannot be installed in a browser (WebAssembly) environment.\n`, 'warn');
+      }
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Install';
+  document.getElementById('pkg-input').value = '';
+  renderInstalledPkgs();
+}
+
+function renderInstalledPkgs() {
+  const chips = document.getElementById('pkg-chips');
+  chips.innerHTML = installedPackages.length === 0
+    ? '<span style="color:var(--text-faint);font-size:12px">None yet</span>'
+    : installedPackages.map(p => `<div class="pkg-chip">${escHtml(p)}</div>`).join('');
+}
+
+function renderCompatChips() {
+  const el = document.getElementById('compat-chips');
+  if (!el) return;
+  el.innerHTML = KNOWN_WORKING.map(p => `<div class="pkg-chip" style="cursor:pointer;border-color:rgba(13,255,170,0.3)" onclick="document.getElementById('pkg-input').value='${p}'" title="Click to fill">${escHtml(p)}</div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════
+//  RESIZABLE SPLIT
+// ═══════════════════════════════════════════════════
+(function() {
+  const handle = document.getElementById('split-handle');
+  const editorW = document.getElementById('editors-wrapper');
+  let dragging = false, startY, startH;
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startH = editorW.offsetHeight;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const delta = e.clientY - startY;
+    const newH = Math.max(100, Math.min(startH + delta, window.innerHeight - 200));
+    editorW.style.height = newH + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    sessions.forEach(s => s.editor.refresh());
+  });
+})();
+
+// ═══════════════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════════════
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  // Create default session
+  createSession('main.py', `# Welcome to NEXUS Runtime 🚀
+# Ctrl+Enter to run | Code runs in persistent env (no global reset between runs)
+
+import sys
+
+print(f"Python {sys.version}")
+print("Hello from NEXUS!")
+
+# Variables persist between runs unless you click Reset Globals
+counter = locals().get('counter', 0) + 1
+print(f"Run count in Python: {counter}")
+`);
+
+  initPyodide();
+});
+</script>
+</body>
+</html>
